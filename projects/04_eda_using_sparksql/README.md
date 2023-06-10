@@ -8,3 +8,5 @@ Credit to matj42 for the football matches dataset. Data can be found in his gith
 
 The idea behind this is to showcase my SQL level, which by no means is advanced but sufficiently capable of handling most data explorations and queries.
 We further utilise Spark to explore the potential to integrate SQL queries via spark and data processing and analysis in pandas.
+
+![football_matches_across_years](https://github.com/jad-22/business_analytics/blob/main/projects/04_eda_using_sparksql/04_football_across_years.png)
