@@ -11,7 +11,7 @@ In this case, we will look into how in-store promotions, such as circulars and d
 
 ### Methodology
 
-[scanpro_model_equation](https://github.com/jad-22/business_analytics/blob/main/projects/02_marketing_mix_modelling/02_mmm_scanpro_equation.png)
+![scanpro_model_equation](https://github.com/jad-22/business_analytics/blob/main/projects/02_marketing_mix_modelling/02_mmm_scanpro_equation.png)
 
 To assess the effectiveness of the various marketing strategies of the particular retail store, we use the SCAN*PRO model, which is one of the most well-known models to estimate the impact of promotions.
 We will focus on measuring the elasticities of display promotion, feature advertising and temporary price reductions on sales of mouthwash products from a store in Cincinnati, Ohio. 
