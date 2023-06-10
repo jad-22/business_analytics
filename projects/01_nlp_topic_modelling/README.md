@@ -1,10 +1,16 @@
 # 01. Topic Modelling on User's Web Activities
 
+[!topic_modelling_process](01_nlp_topic_modelling/01_topic_modelling_process.png)
+
 **Note: Data provided by and code submitted to IPSOS are non-disclosable as per NDA**
 
 ### Data Source
 
 Data is provided by IPSOS under Non-Disclosable Agreement.
+
+### Credit
+
+Credit to my team members: Irene Wang, Sonia Zhang, Anne-Fleur Hilbert, Li Zike, Ren Xinyao, Du Diqin, Julia Zhang
 
 ### Objectives
 
