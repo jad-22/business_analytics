@@ -1,5 +1,7 @@
 # 01. Topic Modelling on User's Web Activities
 
+**Note: Data provided by and code submitted to IPSOS are non-disclosable as per NDA**
+
 ### Data Source
 
 Data is provided by IPSOS under Non-Disclosable Agreement.
