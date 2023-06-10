@@ -1,6 +1,6 @@
 # 01. Topic Modelling on User's Web Activities
 
-[!topic_modelling_process](01_nlp_topic_modelling/01_topic_modelling_process.png)
+![topic_modelling_process](https://github.com/jad-22/business_analytics/blob/main/projects/01_nlp_topic_modelling/01_topic_modelling_process.png)
 
 **Note: Data provided by and code submitted to IPSOS are non-disclosable as per NDA**
 
