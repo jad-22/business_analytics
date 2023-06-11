@@ -1,0 +1,819 @@
+---
+title: "RMA - Marketing Mix Modelling"
+author: "Jason Darsono"
+date: "2023-04-04"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+# Load setups and relevant libraries
+knitr::opts_chunk$set(cache=TRUE, echo=TRUE, fig.align="center")
+
+library(scales)
+library(naniar)
+library(readxl)
+library(tidyverse)
+library(dplyr)
+library(patchwork)
+library(lubridate)
+library(tseries)
+library(forecast)
+library(ggplot2)
+library(stargazer)
+library(reshape)
+```
+
+# Read Cincinnati Store File
+
+```{r load}
+# Load Dataset
+data <- read_csv("data25027.csv")
+head(data)
+```
+
+We know from our data explorations that the available categories are "BAG SNACKS", "ORAL HYGIENE PRODUCTS", "COLD CEREAL" and "FROZEN PIZZA".
+
+We select "ORAL HYGIENE PRODUCTS" category in our deep-dive analysis, focusing on mouthwash products with large sizes (more than or equal to 1L). For this, we have the few products that we can analyse as follows:
+
+* **Product 1**
+  * UPC: 1111035398
+  * Product Description: PL BL MINT ANTSPTC RINSE
+  * Manufacturer: PRIVATE LABEL
+  * Product size: 1.5L
+* **Product 2**
+  * UPC: 3700031613
+  * Product Description: SCOPE ORIG MINT MOUTHWASH
+  * Manufacturer: P & G
+  * Product size: 1L
+* **Product 3**
+  * UPC: 3700044982
+  * Product Description: CREST PH CLN MINT RINSE	
+  * Manufacturer: P & G
+  * Product size: 1L
+* **Product 4**
+  * UPC: 31254742735
+  * Product Description: LSTRNE CL MINT ANTSPTC MW
+  * Manufacturer: WARNER
+  * Product size: 1L
+* **Product 5**
+  * UPC: 31254742835
+  * Product Description: LSTRNE FRS BRST ANTSPC MW
+  * Manufacturer: WARNER
+  * Product size: 1L
+
+We will analyse the sales of mouthwash in Cincinnati store, Ohio using two marketing mix modelling as follows:
+
+1. SCAN*PRO model
+
+$$q_{kjt} = [\prod^{n}_{r=1}(\frac{p_{krt}}{\bar{p}_{kr}})^{\beta rj} \prod^{3}_{l=1}\gamma_{lrj}^{D_{lkrt}}][\prod^{T}_{t=1}\delta_{jt}^{X_t}][\prod^{K}_{k=1}\lambda_{kj}^{Z_k}]e^{u_{kjt}}$$
+
+Simplifying the model, we only consider a single store (ID: 25027) and take each individual UPC to be its own "brand". Therefore, our SCAN*PRO is as follows:
+
+$$q_{jt} = [\prod^{5}_{r=1}(\frac{p_{rt}}{\bar{p}_{r}})^{\beta rj} \prod^{3}_{l=1}\gamma_{lrj}^{D_{lrt}}][\prod^{52}_{t=1}\delta_{jt}^{X_t}]e^{u_{jt}}$$
+
+Taking the log-transformation, we then have a linear model which we can apply OLS to study the effect of each promotional campaign.
+
+$$ln(q_{jt}) = \sum^{5}_{r=1} \beta_{rj} ln(\frac{p_{rt}}{\bar{p}_{r}}) + \sum^{5}_{r=1} \sum^{3}_{l=1} \gamma_{lrj}' D_{lrt}+\sum^{52}_{t=1} \delta_{jt}' X_{t} + \epsilon_{jt}$$
+
+Finally we have our estimator expressed as follows:
+
+$$\widehat{ln(q_{j})} = \sum^{5}_{r=1} \hat{\beta_{rj}} \ln(\text{PI}) + \sum^{5}_{r=1} \sum^{3}_{l=1} \hat{\gamma_{lrj}}' D_{lr}+\sum^{51}_{t=1} \hat{\delta_{jt}}' X_{t}$$
+Where $\text{PI}=\frac{p_{r}}{\bar{p}_{r}}$.
+
+```{r filter-upc}
+# filter the data with the mouthwash products using selected UPC
+selected_upcs <- c(1111035398, 3700031613, 3700044982, 31254742735, 31254742835)
+
+data_mw <- data %>% 
+  filter(CATEGORY == "ORAL HYGIENE PRODUCTS",
+         UPC %in% selected_upcs) %>%
+  mutate(WEEK = week(ymd(WEEK_END_DATE)),
+         PRODUCT = case_when(UPC == 1111035398 ~ "Product1",
+                             UPC == 3700031613 ~ "Product2",
+                             UPC == 3700044982 ~ "Product3",
+                             UPC == 31254742735 ~ "Product4",
+                             UPC == 31254742835 ~ "Product5")) %>%
+  select(WEEK_END_DATE, UPC, WEEK, PRODUCT, 
+         UNITS, PRICE, FEATURE, DISPLAY) %>%
+  arrange(WEEK_END_DATE, UPC)
+```
+
+
+```{r pivot-wider}
+# get the median price of the products
+median_prices <- data_mw %>% 
+  group_by(PRODUCT) %>% 
+  summarise(MEDIAN = median(PRICE))
+
+# merge median price into main dataframe
+# calculate for log of price, log of sales
+# and get indicators for feature only, display only or combination of both
+data_mw2 <- merge(data_mw, median_prices, by="PRODUCT") %>%
+  select(WEEK_END_DATE, UPC, WEEK, PRODUCT, 
+         UNITS, PRICE, FEATURE, DISPLAY, MEDIAN) %>%
+  mutate(PRICEIDX = PRICE / MEDIAN,
+         LNPRICEIDX = log(PRICEIDX),
+         LNSALES = log(UNITS),
+         FEATUREONLY = ifelse((FEATURE==1)&(DISPLAY==0), 1, 0),
+         DISPLAYONLY = ifelse((FEATURE==0)&(DISPLAY==1), 1, 0),
+         COMBINATION = ifelse((FEATURE==1)&(DISPLAY==1), 1, 0)) %>%
+  arrange(WEEK_END_DATE, UPC)
+
+# pivot wide the independent variables such as sales, price, feature, display and combination
+wide_data <- data_mw2 %>% 
+  pivot_wider(id_cols=WEEK_END_DATE, names_from=PRODUCT, names_sort = TRUE,
+              values_from=c(LNSALES, LNPRICEIDX, FEATUREONLY, DISPLAYONLY, COMBINATION))
+
+# pivot wide the week indicators
+week_wide <- data_mw2 %>% 
+  pivot_wider(id_cols=WEEK_END_DATE, names_from=WEEK, names_sort = TRUE, names_prefix="WEEK_",
+              values_from=WEEK,values_fill=0, values_fn = function(x){ifelse(length(x) >= 1, 1, 0)})
+
+# merge all independent variables into one by date
+wide_data2 <- wide_data %>%
+  merge(week_wide, by="WEEK_END_DATE")
+```
+
+## Check for missing values
+
+We check if there are any missing data. Missing data indicates unsuitable for time-series analysis.
+
+```{r visualise-missing}
+# visualise if there is any missing data
+vis_miss(wide_data2[,2:6])
+gg_miss_upset(wide_data2[,2:6])
+```
+
+## Check for collinearity
+
+```{r corr1, warning=FALSE}
+cormat <- round(cor(drop_na(wide_data2[,2:26])), 3)
+cormat[lower.tri(cormat)]<- NA
+melted_cormat <- melt(cormat, na.rm=T)
+
+ggheatmap <- ggplot(melted_cormat, aes(X1, X2, fill = value)) +
+ geom_tile(color = "white") +
+ scale_fill_gradient2(low = "blue", mid = "pink", high = "red", 
+                      midpoint = 0, limit = c(-1,1), space = "Lab",
+                      na.value = "white", name="Pearson\nCorrelation") +
+ theme_minimal() +
+ theme(axis.title=element_blank(),
+       axis.text.x=element_blank()) +
+ coord_fixed()
+
+print(ggheatmap)
+```
+
+Close to perfect collinearity observed between price of product4 and product5, with correlation of 0.994. 
+
+```{r corr2}
+cor(drop_na(wide_data2[,c(10,11)]))
+```
+
+Price movements are also identicall between the two.
+
+```{r corr3}
+ggplot(data=wide_data2) +
+  geom_line(aes(x=WEEK_END_DATE, y=LNPRICEIDX_Product4, color="blue"), linewidth=1, linetype="dashed", alpha=0.7) +
+  geom_line(aes(x=WEEK_END_DATE, y=LNPRICEIDX_Product5, color="red"), linewidth=1, linetype="solid", alpha=0.7) +
+  scale_color_manual(name="", labels=c("Product 4", "Product 5"), values=c("blue", "red"), breaks=c("blue", "red")) +
+  theme(legend.position = "top") +
+  labs(y="LNPRICEIDX")
+```
+
+Therefore, we decided to average out the price index movements i.e. the log of price index of product 4 and product 5.
+
+```{r corr4}
+# average out the price movements
+wide_data2$LNPRICEIDX_Product45 <- rowMeans(wide_data2[,c("LNPRICEIDX_Product4", "LNPRICEIDX_Product5")])
+```
+
+
+# 1. SCAN*PRO model
+
+Fit all the relevant variables into the OLS regression to get the SCAN*PRO model.
+
+```{r scanpro1}
+fit1 <- lm(LNSALES_Product1 ~ LNPRICEIDX_Product1 + LNPRICEIDX_Product2 + LNPRICEIDX_Product3 +
+                     LNPRICEIDX_Product45 + DISPLAYONLY_Product1 + 
+                     WEEK_1 + WEEK_2 + WEEK_3 + WEEK_4 + WEEK_5 + WEEK_6 + WEEK_7 + WEEK_8 + 
+                     WEEK_9 + WEEK_10 + WEEK_11 + WEEK_12 + WEEK_13 + WEEK_14 + WEEK_15 + WEEK_16 + WEEK_17 +
+                     WEEK_18 + WEEK_19 + WEEK_20 + WEEK_21 + WEEK_22 + WEEK_23 + WEEK_24 + WEEK_25 + WEEK_26 +
+                     WEEK_27 + WEEK_28 + WEEK_29 + WEEK_30 + WEEK_31 + WEEK_32 + WEEK_33 + WEEK_34 + WEEK_35 +
+                     WEEK_36 + WEEK_37 + WEEK_38 + WEEK_39 + WEEK_40 + WEEK_41 + WEEK_42 + WEEK_43 + WEEK_44 +
+                     WEEK_45 + WEEK_46 + WEEK_47 + WEEK_48 + WEEK_49 + WEEK_50 + WEEK_51,
+                   data = drop_na(wide_data2))
+
+fit2 <- lm(LNSALES_Product2 ~ LNPRICEIDX_Product1 + LNPRICEIDX_Product2 + LNPRICEIDX_Product3 +
+                     LNPRICEIDX_Product45 + DISPLAYONLY_Product2 + FEATUREONLY_Product2 + 
+                     WEEK_1 + WEEK_2 + WEEK_3 + WEEK_4 + WEEK_5 + WEEK_6 + WEEK_7 + WEEK_8 + 
+                     WEEK_9 + WEEK_10 + WEEK_11 + WEEK_12 + WEEK_13 + WEEK_14 + WEEK_15 + WEEK_16 + WEEK_17 +
+                     WEEK_18 + WEEK_19 + WEEK_20 + WEEK_21 + WEEK_22 + WEEK_23 + WEEK_24 + WEEK_25 + WEEK_26 +
+                     WEEK_27 + WEEK_28 + WEEK_29 + WEEK_30 + WEEK_31 + WEEK_32 + WEEK_33 + WEEK_34 + WEEK_35 +
+                     WEEK_36 + WEEK_37 + WEEK_38 + WEEK_39 + WEEK_40 + WEEK_41 + WEEK_42 + WEEK_43 + WEEK_44 +
+                     WEEK_45 + WEEK_46 + WEEK_47 + WEEK_48 + WEEK_49 + WEEK_50 + WEEK_51,
+                   data = drop_na(wide_data2))
+
+fit3 <- lm(LNSALES_Product3 ~ LNPRICEIDX_Product1 + LNPRICEIDX_Product2 + LNPRICEIDX_Product3 +
+                     LNPRICEIDX_Product45 + DISPLAYONLY_Product3 + FEATUREONLY_Product3 + 
+                     COMBINATION_Product3 + WEEK_1 + WEEK_2 + WEEK_3 + WEEK_4 + WEEK_5 + WEEK_6 + WEEK_7 + WEEK_8 + 
+                     WEEK_9 + WEEK_10 + WEEK_11 + WEEK_12 + WEEK_13 + WEEK_14 + WEEK_15 + WEEK_16 + WEEK_17 +
+                     WEEK_18 + WEEK_19 + WEEK_20 + WEEK_21 + WEEK_22 + WEEK_23 + WEEK_24 + WEEK_25 + WEEK_26 +
+                     WEEK_27 + WEEK_28 + WEEK_29 + WEEK_30 + WEEK_31 + WEEK_32 + WEEK_33 + WEEK_34 + WEEK_35 +
+                     WEEK_36 + WEEK_37 + WEEK_38 + WEEK_39 + WEEK_40 + WEEK_41 + WEEK_42 + WEEK_43 + WEEK_44 +
+                     WEEK_45 + WEEK_46 + WEEK_47 + WEEK_48 + WEEK_49 + WEEK_50 + WEEK_51,
+                   data = drop_na(wide_data2))
+
+
+fit4 <- lm(LNSALES_Product4 ~ LNPRICEIDX_Product1 + LNPRICEIDX_Product2 + LNPRICEIDX_Product3 +
+                     LNPRICEIDX_Product45 + DISPLAYONLY_Product4 + FEATUREONLY_Product4 + 
+                     COMBINATION_Product4 + WEEK_1 + WEEK_2 + WEEK_3 + WEEK_4 + WEEK_5 + WEEK_6 + WEEK_7 + WEEK_8 + 
+                     WEEK_9 + WEEK_10 + WEEK_11 + WEEK_12 + WEEK_13 + WEEK_14 + WEEK_15 + WEEK_16 + WEEK_17 +
+                     WEEK_18 + WEEK_19 + WEEK_20 + WEEK_21 + WEEK_22 + WEEK_23 + WEEK_24 + WEEK_25 + WEEK_26 +
+                     WEEK_27 + WEEK_28 + WEEK_29 + WEEK_30 + WEEK_31 + WEEK_32 + WEEK_33 + WEEK_34 + WEEK_35 +
+                     WEEK_36 + WEEK_37 + WEEK_38 + WEEK_39 + WEEK_40 + WEEK_41 + WEEK_42 + WEEK_43 + WEEK_44 +
+                     WEEK_45 + WEEK_46 + WEEK_47 + WEEK_48 + WEEK_49 + WEEK_50 + WEEK_51,
+                   data = drop_na(wide_data2))
+
+
+fit5 <- lm(LNSALES_Product5 ~ LNPRICEIDX_Product1 + LNPRICEIDX_Product2 + LNPRICEIDX_Product3 +
+                     LNPRICEIDX_Product45 + DISPLAYONLY_Product5 + FEATUREONLY_Product5 + 
+                     COMBINATION_Product5 + WEEK_1 + WEEK_2 + WEEK_3 + WEEK_4 + WEEK_5 + WEEK_6 + WEEK_7 + WEEK_8 + 
+                     WEEK_9 + WEEK_10 + WEEK_11 + WEEK_12 + WEEK_13 + WEEK_14 + WEEK_15 + WEEK_16 + WEEK_17 +
+                     WEEK_18 + WEEK_19 + WEEK_20 + WEEK_21 + WEEK_22 + WEEK_23 + WEEK_24 + WEEK_25 + WEEK_26 +
+                     WEEK_27 + WEEK_28 + WEEK_29 + WEEK_30 + WEEK_31 + WEEK_32 + WEEK_33 + WEEK_34 + WEEK_35 +
+                     WEEK_36 + WEEK_37 + WEEK_38 + WEEK_39 + WEEK_40 + WEEK_41 + WEEK_42 + WEEK_43 + WEEK_44 +
+                     WEEK_45 + WEEK_46 + WEEK_47 + WEEK_48 + WEEK_49 + WEEK_50 + WEEK_51,
+                   data = drop_na(wide_data2))
+```
+
+
+
+We view the regression results using the `stargazer` package. We found that the $R^2$ is high for product 4 and 5, while it is decently high for product 2 and 3.
+
+```{r results='asis', warning=FALSE}
+stargazer(fit1, fit2, fit3, fit4, fit5, header=F, type="html", title="I. SCAN*PRO Model using OLS Regression")
+```
+
+
+# 2. Dynamic SCAN*PRO
+
+To actually perform a dynamic SCAN*PRO model, we need to have a time-series data without missing values. Then we select the number of lag and lead terms for the product prices to include in the model. Here, we use median value to impute missing price and sales data, and 0 for promotional activities (i.e. we assume normal day without promotions and with median price induce a median level sales).
+
+```{r impute}
+# Create copy of the dataframe
+wide_data3 <- data.frame(wide_data2)
+
+# Replace missing sales and prices with median sales and prices
+for (i in 2:11) {
+  wide_data3[, i][is.na(wide_data3[, i])] <- median(wide_data3[, i], na.rm=TRUE)
+}
+
+# Replace missing promotion activities with 0
+for (i in 12:26) {
+  wide_data3[, i][is.na(wide_data3[, i])] <- 0
+}
+```
+
+
+## Add lag-4 and lead-4 terms into the dataframe for all products
+
+```{r lag-lead-terms}
+wide_data4 <- wide_data3 %>%
+  mutate( 
+    # Create Lag and Lead terms for LN PRICE INDEX of Products
+    #### Product 1
+         LNPI_LAG1_Product1 = lag(LNPRICEIDX_Product1, n=1),
+         LNPI_LAG2_Product1 = lag(LNPRICEIDX_Product1, n=2),
+         LNPI_LAG3_Product1 = lag(LNPRICEIDX_Product1, n=3),
+         LNPI_LAG4_Product1 = lag(LNPRICEIDX_Product1, n=4),
+         LNPI_LEAD1_Product1 = lead(LNPRICEIDX_Product1, n=1),
+         LNPI_LEAD2_Product1 = lead(LNPRICEIDX_Product1, n=2),
+         LNPI_LEAD3_Product1 = lead(LNPRICEIDX_Product1, n=3),
+         LNPI_LEAD4_Product1 = lead(LNPRICEIDX_Product1, n=4),
+    #### Product 2
+         LNPI_LAG1_Product2 = lag(LNPRICEIDX_Product2, n=1),
+         LNPI_LAG2_Product2 = lag(LNPRICEIDX_Product2, n=2),
+         LNPI_LAG3_Product2 = lag(LNPRICEIDX_Product2, n=3),
+         LNPI_LAG4_Product2 = lag(LNPRICEIDX_Product2, n=4),
+         LNPI_LEAD1_Product2 = lead(LNPRICEIDX_Product2, n=1),
+         LNPI_LEAD2_Product2 = lead(LNPRICEIDX_Product2, n=2),
+         LNPI_LEAD3_Product2 = lead(LNPRICEIDX_Product2, n=3),
+         LNPI_LEAD4_Product2 = lead(LNPRICEIDX_Product2, n=4),
+    #### Product 3
+         LNPI_LAG1_Product3 = lag(LNPRICEIDX_Product3, n=1),
+         LNPI_LAG2_Product3 = lag(LNPRICEIDX_Product3, n=2),
+         LNPI_LAG3_Product3 = lag(LNPRICEIDX_Product3, n=3),
+         LNPI_LAG4_Product3 = lag(LNPRICEIDX_Product3, n=4),
+         LNPI_LEAD1_Product3 = lead(LNPRICEIDX_Product3, n=1),
+         LNPI_LEAD2_Product3 = lead(LNPRICEIDX_Product3, n=2),
+         LNPI_LEAD3_Product3 = lead(LNPRICEIDX_Product3, n=3),
+         LNPI_LEAD4_Product3 = lead(LNPRICEIDX_Product3, n=4),
+    #### Product 4 and 5
+         LNPI_LAG1_Product45 = lag(LNPRICEIDX_Product45, n=1),
+         LNPI_LAG2_Product45 = lag(LNPRICEIDX_Product45, n=2),
+         LNPI_LAG3_Product45 = lag(LNPRICEIDX_Product45, n=3),
+         LNPI_LAG4_Product45 = lag(LNPRICEIDX_Product45, n=4),
+         LNPI_LEAD1_Product45 = lead(LNPRICEIDX_Product45, n=1),
+         LNPI_LEAD2_Product45 = lead(LNPRICEIDX_Product45, n=2),
+         LNPI_LEAD3_Product45 = lead(LNPRICEIDX_Product45, n=3),
+         LNPI_LEAD4_Product45 = lead(LNPRICEIDX_Product45, n=4)
+         ) %>%
+  drop_na()
+```
+
+
+## Fit into the dynamic SCAN*PRO mdoel
+
+```{r dynamic-scanpro}
+dsp.fit1 <- lm(LNSALES_Product1 ~ LNPRICEIDX_Product1 + LNPRICEIDX_Product2 + LNPRICEIDX_Product3 +
+                     LNPRICEIDX_Product45 + DISPLAYONLY_Product1 + 
+                     LNPI_LAG1_Product1 + LNPI_LAG2_Product1 + LNPI_LAG3_Product1 + LNPI_LAG4_Product1 +  
+                     LNPI_LEAD1_Product1 + LNPI_LEAD2_Product1 + LNPI_LEAD3_Product1 + LNPI_LEAD4_Product1 + 
+                     WEEK_1 + WEEK_2 + WEEK_3 + WEEK_4 + WEEK_5 + WEEK_6 + WEEK_7 + WEEK_8 + 
+                     WEEK_9 + WEEK_10 + WEEK_11 + WEEK_12 + WEEK_13 + WEEK_14 + WEEK_15 + WEEK_16 + WEEK_17 +
+                     WEEK_18 + WEEK_19 + WEEK_20 + WEEK_21 + WEEK_22 + WEEK_23 + WEEK_24 + WEEK_25 + WEEK_26 +
+                     WEEK_27 + WEEK_28 + WEEK_29 + WEEK_30 + WEEK_31 + WEEK_32 + WEEK_33 + WEEK_34 + WEEK_35 +
+                     WEEK_36 + WEEK_37 + WEEK_38 + WEEK_39 + WEEK_40 + WEEK_41 + WEEK_42 + WEEK_43 + WEEK_44 +
+                     WEEK_45 + WEEK_46 + WEEK_47 + WEEK_48 + WEEK_49 + WEEK_50 + WEEK_51,
+                   data = wide_data4)
+
+dsp.fit2 <- lm(LNSALES_Product2 ~ LNPRICEIDX_Product1 + LNPRICEIDX_Product2 + LNPRICEIDX_Product3 +
+                     LNPRICEIDX_Product45 + DISPLAYONLY_Product2 + FEATUREONLY_Product2 + 
+                     LNPI_LAG1_Product2 + LNPI_LAG2_Product2 + LNPI_LAG3_Product2 + LNPI_LAG4_Product2 +  
+                     LNPI_LEAD1_Product2 + LNPI_LEAD2_Product2 + LNPI_LEAD3_Product2 + LNPI_LEAD4_Product2 + 
+                     WEEK_1 + WEEK_2 + WEEK_3 + WEEK_4 + WEEK_5 + WEEK_6 + WEEK_7 + WEEK_8 + 
+                     WEEK_9 + WEEK_10 + WEEK_11 + WEEK_12 + WEEK_13 + WEEK_14 + WEEK_15 + WEEK_16 + WEEK_17 +
+                     WEEK_18 + WEEK_19 + WEEK_20 + WEEK_21 + WEEK_22 + WEEK_23 + WEEK_24 + WEEK_25 + WEEK_26 +
+                     WEEK_27 + WEEK_28 + WEEK_29 + WEEK_30 + WEEK_31 + WEEK_32 + WEEK_33 + WEEK_34 + WEEK_35 +
+                     WEEK_36 + WEEK_37 + WEEK_38 + WEEK_39 + WEEK_40 + WEEK_41 + WEEK_42 + WEEK_43 + WEEK_44 +
+                     WEEK_45 + WEEK_46 + WEEK_47 + WEEK_48 + WEEK_49 + WEEK_50 + WEEK_51,
+                   data = wide_data4)
+
+dsp.fit3 <- lm(LNSALES_Product3 ~ LNPRICEIDX_Product1 + LNPRICEIDX_Product2 + LNPRICEIDX_Product3 +
+                     LNPRICEIDX_Product45 + DISPLAYONLY_Product3 + FEATUREONLY_Product3 + 
+                     LNPI_LAG1_Product3 + LNPI_LAG2_Product3 + LNPI_LAG3_Product3 + LNPI_LAG4_Product3 +  
+                     LNPI_LEAD1_Product3 + LNPI_LEAD2_Product3 + LNPI_LEAD3_Product3 + LNPI_LEAD4_Product3 +
+                     COMBINATION_Product3 + WEEK_1 + WEEK_2 + WEEK_3 + WEEK_4 + WEEK_5 + WEEK_6 + WEEK_7 + WEEK_8 + 
+                     WEEK_9 + WEEK_10 + WEEK_11 + WEEK_12 + WEEK_13 + WEEK_14 + WEEK_15 + WEEK_16 + WEEK_17 +
+                     WEEK_18 + WEEK_19 + WEEK_20 + WEEK_21 + WEEK_22 + WEEK_23 + WEEK_24 + WEEK_25 + WEEK_26 +
+                     WEEK_27 + WEEK_28 + WEEK_29 + WEEK_30 + WEEK_31 + WEEK_32 + WEEK_33 + WEEK_34 + WEEK_35 +
+                     WEEK_36 + WEEK_37 + WEEK_38 + WEEK_39 + WEEK_40 + WEEK_41 + WEEK_42 + WEEK_43 + WEEK_44 +
+                     WEEK_45 + WEEK_46 + WEEK_47 + WEEK_48 + WEEK_49 + WEEK_50 + WEEK_51,
+                   data = wide_data4)
+
+
+dsp.fit4 <- lm(LNSALES_Product4 ~ LNPRICEIDX_Product1 + LNPRICEIDX_Product2 + LNPRICEIDX_Product3 +
+                     LNPRICEIDX_Product45 + DISPLAYONLY_Product4 + FEATUREONLY_Product4 + 
+                     LNPI_LAG1_Product45 + LNPI_LAG2_Product45 + LNPI_LAG3_Product45 + LNPI_LAG4_Product45 +  
+                     LNPI_LEAD1_Product45 + LNPI_LEAD2_Product45 + LNPI_LEAD3_Product45 + LNPI_LEAD4_Product45 +
+                     COMBINATION_Product4 + WEEK_1 + WEEK_2 + WEEK_3 + WEEK_4 + WEEK_5 + WEEK_6 + WEEK_7 + WEEK_8 + 
+                     WEEK_9 + WEEK_10 + WEEK_11 + WEEK_12 + WEEK_13 + WEEK_14 + WEEK_15 + WEEK_16 + WEEK_17 +
+                     WEEK_18 + WEEK_19 + WEEK_20 + WEEK_21 + WEEK_22 + WEEK_23 + WEEK_24 + WEEK_25 + WEEK_26 +
+                     WEEK_27 + WEEK_28 + WEEK_29 + WEEK_30 + WEEK_31 + WEEK_32 + WEEK_33 + WEEK_34 + WEEK_35 +
+                     WEEK_36 + WEEK_37 + WEEK_38 + WEEK_39 + WEEK_40 + WEEK_41 + WEEK_42 + WEEK_43 + WEEK_44 +
+                     WEEK_45 + WEEK_46 + WEEK_47 + WEEK_48 + WEEK_49 + WEEK_50 + WEEK_51,
+                   data = wide_data4)
+
+
+dsp.fit5 <- lm(LNSALES_Product5 ~ LNPRICEIDX_Product1 + LNPRICEIDX_Product2 + LNPRICEIDX_Product3 +
+                     LNPRICEIDX_Product45 + DISPLAYONLY_Product5 + FEATUREONLY_Product5 + 
+                     LNPI_LAG1_Product45 + LNPI_LAG2_Product45 + LNPI_LAG3_Product45 + LNPI_LAG4_Product45 +  
+                     LNPI_LEAD1_Product45 + LNPI_LEAD2_Product45 + LNPI_LEAD3_Product45 + LNPI_LEAD4_Product45 +
+                     COMBINATION_Product5 + WEEK_1 + WEEK_2 + WEEK_3 + WEEK_4 + WEEK_5 + WEEK_6 + WEEK_7 + WEEK_8 + 
+                     WEEK_9 + WEEK_10 + WEEK_11 + WEEK_12 + WEEK_13 + WEEK_14 + WEEK_15 + WEEK_16 + WEEK_17 +
+                     WEEK_18 + WEEK_19 + WEEK_20 + WEEK_21 + WEEK_22 + WEEK_23 + WEEK_24 + WEEK_25 + WEEK_26 +
+                     WEEK_27 + WEEK_28 + WEEK_29 + WEEK_30 + WEEK_31 + WEEK_32 + WEEK_33 + WEEK_34 + WEEK_35 +
+                     WEEK_36 + WEEK_37 + WEEK_38 + WEEK_39 + WEEK_40 + WEEK_41 + WEEK_42 + WEEK_43 + WEEK_44 +
+                     WEEK_45 + WEEK_46 + WEEK_47 + WEEK_48 + WEEK_49 + WEEK_50 + WEEK_51,
+                   data = wide_data4)
+```
+
+
+```{r results='asis', warning=FALSE}
+stargazer(dsp.fit1, dsp.fit2, dsp.fit3, dsp.fit4, dsp.fit5, header=F, type="html", title="II. Dynamic SCAN*PRO using OLS Regression")
+```
+
+
+# Extension: Visualisation on promotion and sales effect
+
+We can further study and observe the effects of promotion visually. The Black bars at the bottom indicates the promotional activities that are ongoing, i.e. a black bar on the top row "Display" indicates that there is a display-only promotion during that time period. We could further study the delayed purchase and forward purchase effect through this extension, however, due to the limitations of the report, we will not be discussing this topic further in details.
+
+```{r p1-promo}
+p1.sales <- ggplot(wide_data3, aes(x=WEEK_END_DATE, y=LNSALES_Product1)) + 
+  geom_line() +
+  theme(axis.title.x=element_blank()) +
+  labs(y="Log of sales (weekly)")
+  
+p1.display <- ggplot(wide_data3) + 
+  geom_tile(aes(x=WEEK_END_DATE, y=DISPLAYONLY_Product1)) +
+  coord_cartesian(ylim=c(0.9,1.1)) +
+  theme_void() +
+  theme(axis.title.y.left = element_text(size=8)) +
+  labs(y="Display")
+
+p1.feature <- ggplot(wide_data3) + 
+  geom_tile(aes(x=WEEK_END_DATE, y=FEATUREONLY_Product1)) +
+  coord_cartesian(ylim=c(0.9,1.1)) +
+  theme_void() +
+  theme(axis.title.y.left = element_text(size=8)) +
+  labs(y="Feature")
+
+p1.both <- ggplot(wide_data3) + 
+  geom_tile(aes(x=WEEK_END_DATE, y=COMBINATION_Product1)) +
+  coord_cartesian(ylim=c(0.9,1.1)) +
+  theme_void() +
+  theme(axis.title.y.left = element_text(size=8)) +
+  labs(y="Both")
+
+p1.all <- p1.sales + p1.display + p1.feature + p1.both +
+  plot_layout(widths = 15, heights = c(12, 0.5, 0.5, 0.5)) +
+  plot_annotation(
+    title="Product 1: Sales over time with various promotion",
+    theme=theme(
+        plot.caption=element_text(face="italic"),
+      )
+    )
+
+p1.all
+```
+
+
+
+```{r p2-promo}
+p2.sales <- ggplot(wide_data3, aes(x=WEEK_END_DATE, y=LNSALES_Product2)) + 
+  geom_line() +
+  theme(axis.title.x=element_blank()) +
+  labs(y="Log of sales (weekly)")
+  
+p2.display <- ggplot(wide_data3) + 
+  geom_tile(aes(x=WEEK_END_DATE, y=DISPLAYONLY_Product2)) +
+  coord_cartesian(ylim=c(0.9,1.1)) +
+  theme_void() +
+  theme(axis.title.y.left = element_text(size=8)) +
+  labs(y="Display")
+
+p2.feature <- ggplot(wide_data3) + 
+  geom_tile(aes(x=WEEK_END_DATE, y=FEATUREONLY_Product2)) +
+  coord_cartesian(ylim=c(0.9,1.1)) +
+  theme_void() +
+  theme(axis.title.y.left = element_text(size=8)) +
+  labs(y="Feature")
+
+p2.both <- ggplot(wide_data3) + 
+  geom_tile(aes(x=WEEK_END_DATE, y=COMBINATION_Product2)) +
+  coord_cartesian(ylim=c(0.9,1.1)) +
+  theme_void() +
+  theme(axis.title.y.left = element_text(size=8)) +
+  labs(y="Both")
+
+p2.all <- p2.sales + p2.display + p2.feature + p2.both +
+  plot_layout(widths = 15, heights = c(12, 0.5, 0.5, 0.5)) +
+  plot_annotation(
+    title="Product 2: Sales over time with various promotion",
+    theme=theme(
+        plot.caption=element_text(face="italic"),
+      )
+    )
+
+p2.all
+```
+
+
+
+```{r p3-promo}
+p3.sales <- ggplot(wide_data3, aes(x=WEEK_END_DATE, y=LNSALES_Product3)) + 
+  geom_line() +
+  theme(axis.title.x=element_blank()) +
+  labs(y="Log of sales (weekly)")
+  
+p3.display <- ggplot(wide_data3) + 
+  geom_tile(aes(x=WEEK_END_DATE, y=DISPLAYONLY_Product3)) +
+  coord_cartesian(ylim=c(0.9,1.1)) +
+  theme_void() +
+  theme(axis.title.y.left = element_text(size=8)) +
+  labs(y="Display")
+
+p3.feature <- ggplot(wide_data3) + 
+  geom_tile(aes(x=WEEK_END_DATE, y=FEATUREONLY_Product3)) +
+  coord_cartesian(ylim=c(0.9,1.1)) +
+  theme_void() +
+  theme(axis.title.y.left = element_text(size=8)) +
+  labs(y="Feature")
+
+p3.both <- ggplot(wide_data3) + 
+  geom_tile(aes(x=WEEK_END_DATE, y=COMBINATION_Product3)) +
+  coord_cartesian(ylim=c(0.9,1.1)) +
+  theme_void() +
+  theme(axis.title.y.left = element_text(size=8)) +
+  labs(y="Both")
+
+p3.all <- p3.sales + p3.display + p3.feature + p3.both +
+  plot_layout(widths = 15, heights = c(12, 0.5, 0.5, 0.5)) +
+  plot_annotation(
+    title="Product 3: Sales over time with various promotion",
+    theme=theme(
+        plot.caption=element_text(face="italic"),
+      )
+    )
+
+p3.all
+```
+
+
+```{r p4-promo}
+p4.sales <- ggplot(wide_data3, aes(x=WEEK_END_DATE, y=LNSALES_Product4)) + 
+  geom_line() +
+  theme(axis.title.x=element_blank()) +
+  labs(y="Log of sales (weekly)")
+  
+p4.display <- ggplot(wide_data3) + 
+  geom_tile(aes(x=WEEK_END_DATE, y=DISPLAYONLY_Product4)) +
+  coord_cartesian(ylim=c(0.9,1.1)) +
+  theme_void() +
+  theme(axis.title.y.left = element_text(size=8)) +
+  labs(y="Display")
+
+p4.feature <- ggplot(wide_data3) + 
+  geom_tile(aes(x=WEEK_END_DATE, y=FEATUREONLY_Product4)) +
+  coord_cartesian(ylim=c(0.9,1.1)) +
+  theme_void() +
+  theme(axis.title.y.left = element_text(size=8)) +
+  labs(y="Feature")
+
+p4.both <- ggplot(wide_data3) + 
+  geom_tile(aes(x=WEEK_END_DATE, y=COMBINATION_Product4)) +
+  coord_cartesian(ylim=c(0.9,1.1)) +
+  theme_void() +
+  theme(axis.title.y.left = element_text(size=8)) +
+  labs(y="Both")
+
+p4.all <- p4.sales + p4.display + p4.feature + p4.both +
+  plot_layout(widths = 15, heights = c(12, 0.5, 0.5, 0.5)) +
+  plot_annotation(
+    title="Product 4: Sales over time with various promotion",
+    theme=theme(
+        plot.caption=element_text(face="italic"),
+      )
+    )
+
+p4.all
+```
+
+
+```{r p5-promo}
+p5.sales <- ggplot(wide_data3, aes(x=WEEK_END_DATE, y=LNSALES_Product5)) + 
+  geom_line() +
+  theme(axis.title.x=element_blank()) +
+  labs(y="Log of sales (weekly)")
+  
+p5.display <- ggplot(wide_data3) + 
+  geom_tile(aes(x=WEEK_END_DATE, y=DISPLAYONLY_Product5)) +
+  coord_cartesian(ylim=c(0.9,1.1)) +
+  theme_void() +
+  theme(axis.title.y.left = element_text(size=8)) +
+  labs(y="Display")
+
+p5.feature <- ggplot(wide_data3) + 
+  geom_tile(aes(x=WEEK_END_DATE, y=FEATUREONLY_Product5)) +
+  coord_cartesian(ylim=c(0.9,1.1)) +
+  theme_void() +
+  theme(axis.title.y.left = element_text(size=8)) +
+  labs(y="Feature")
+
+p5.both <- ggplot(wide_data3) + 
+  geom_tile(aes(x=WEEK_END_DATE, y=COMBINATION_Product5)) +
+  coord_cartesian(ylim=c(0.9,1.1)) +
+  theme_void() +
+  theme(axis.title.y.left = element_text(size=8)) +
+  labs(y="Both")
+
+p5.all <- p5.sales + p5.display + p5.feature + p5.both +
+  plot_layout(widths = 15, heights = c(12, 0.5, 0.5, 0.5)) +
+  plot_annotation(
+    title="Product 5: Sales over time with various promotion",
+    theme=theme(
+        plot.caption=element_text(face="italic"),
+      )
+    )
+
+p5.all
+```
+
+
+
+# Further Experimentation
+
+If we skip the missing value periods, we can attempt to perform a time-series analysis.
+
+## seasonal-trend decomposition
+
+```{r}
+tsdata <- ts(wide_data3, start=c(0,1), frequency=52)
+
+tsdata[,2] %>%
+  stl(s.window="periodic") %>%
+  autoplot() + ggtitle("Product 1: Seasonal-Trend Decomposition with Loess")
+
+tsdata[,3] %>%
+  stl(s.window="periodic") %>%
+  autoplot() + ggtitle("Product 2: Seasonal-Trend Decomposition with Loess")
+
+tsdata[,4] %>%
+  stl(s.window="periodic") %>%
+  autoplot() + ggtitle("Product 3: Seasonal-Trend Decomposition with Loess")
+
+tsdata[,5] %>%
+  stl(s.window="periodic") %>%
+  autoplot() + ggtitle("Product 4: Seasonal-Trend Decomposition with Loess")
+
+tsdata[,6] %>%
+  stl(s.window="periodic") %>%
+  autoplot() + ggtitle("Product 5: Seasonal-Trend Decomposition with Loess")
+```
+
+Evaluation of STL decomposition:
+
+* **Product 1**: Trend and seasonality are not significant, indicated by the long grey bar (more than the remainder term) on RHS
+* **Product 2**: Trend is not significant, but there may be some seasonality
+* **Product 3**: Similar to product 2, likely due to being on the same brand
+* **Product 4**: Trend and seasonality are not significant
+* **Product 5**: Trend is not significant, but there may be some seasonality
+
+# Stationarity tests
+
+To confirm stationarity, we will perform more rigorous stationarity tests based on the three tests as follow: (i) Augmented Dickey Fuller (ADF) test, (ii) Phillips-Peron (PP) test and (iii) Kwiatkowski-Phillips-Schmidt-Shin (KPSS) test. ADF and PP test against the null hypothesis that a unit root is present in the time series data, hence rejecting this null hypothesis (p-value < $\alpha$) means that the time series is stationary. On the other hand, KPSS tests against the null hypothesis that the data is stationary. And if we're unable to reject this null hypothesis (p-value > $\alpha$), it means that the data is stationary.
+
+```{r results='asis', warning=FALSE}
+for (i in 2:6) {
+  cat("<b>Product ", (i-1), "<\b><br>")
+  print(adf.test(tsdata[,i]))
+  print(pp.test(tsdata[,i]))
+}
+```
+
+Time-series demand is stationary, therefore we do not need to account for long-term trends which shifts the demand.
+
+## Product 1
+
+```{r}
+p1.acf <- ggAcf(tsdata[,2], lag.max=40) + 
+  theme(plot.title=element_blank(), axis.title.x=element_blank())
+p1.pacf <- ggPacf(tsdata[,2], lag.max=40) +
+  theme(plot.title=element_blank())
+
+p1.acf / p1.pacf +
+  plot_annotation(title="Product 1: ACF/PACF plot of weekly sales")
+```
+
+PACF cuts off at lag 1 indicating MA(1) term and PACF tails off slowly
+
+```{r}
+cat("Non-seasonal order of difference:", ndiffs(tsdata[,2]))
+cat("Seasonal order of difference:", nsdiffs(tsdata[,2]))
+
+p1.acf2 <- ggAcf(diff(tsdata[,2]), lag.max=40) + 
+  theme(plot.title=element_blank(), axis.title.x=element_blank())
+p1.pacf2 <- ggPacf(diff(tsdata[,2]), lag.max=40) +
+  theme(plot.title=element_blank())
+
+p1.acf2 / p1.pacf2 +
+  plot_annotation(title="Product 1: ACF/PACF first-order difference plot of weekly sales")
+```
+
+ACF cuts off at lag 1 with 1st order differencing, indicating AR(1) term.
+PACF tails off.
+
+## Product 2
+
+```{r}
+p2.acf <- ggAcf(tsdata[,3], lag.max=40) + 
+  theme(plot.title=element_blank(), axis.title.x=element_blank())
+p2.pacf <- ggPacf(tsdata[,3], lag.max=40) +
+  theme(plot.title=element_blank())
+
+p2.acf / p2.pacf +
+  plot_annotation(title="Product 2: ACF/PACF plot of weekly sales")
+```
+
+PACF and ACF cut off at lag 1 indicating AR(1) and MA(1) terms
+
+```{r}
+cat("Non-seasonal order of difference:", ndiffs(tsdata[,3]))
+cat("Seasonal order of difference:", nsdiffs(tsdata[,3]))
+
+p2.acf2 <- ggAcf(diff(tsdata[,3]), lag.max=40) + 
+  theme(plot.title=element_blank(), axis.title.x=element_blank())
+p2.pacf2 <- ggPacf(diff(tsdata[,3]), lag.max=40) +
+  theme(plot.title=element_blank())
+
+p2.acf2 / p2.pacf2 +
+  plot_annotation(title="Product 2: ACF/PACF first-order difference plot of weekly sales")
+```
+
+ACF cuts off at lag 1 with 1st order differencing, indicating AR(1) term.
+PACF tails off.
+
+
+## Product 3
+
+```{r}
+p3.acf <- ggAcf(tsdata[,4], lag.max=40) + 
+  theme(plot.title=element_blank(), axis.title.x=element_blank())
+p3.pacf <- ggPacf(tsdata[,4], lag.max=40) +
+  theme(plot.title=element_blank())
+
+p3.acf / p3.pacf +
+  plot_annotation(title="Product 3: ACF/PACF plot of weekly sales")
+```
+
+PACF and ACF cut off at lag 1 indicating AR(1) and MA(1) terms
+
+```{r}
+cat("Non-seasonal order of difference:", ndiffs(tsdata[,4]))
+cat("Seasonal order of difference:", nsdiffs(tsdata[,4]))
+
+p3.acf2 <- ggAcf(diff(tsdata[,3]), lag.max=40) + 
+  theme(plot.title=element_blank(), axis.title.x=element_blank())
+p3.pacf2 <- ggPacf(diff(tsdata[,3]), lag.max=40) +
+  theme(plot.title=element_blank())
+
+p3.acf2 / p3.pacf2 +
+  plot_annotation(title="Product 3: ACF/PACF first-order difference plot of weekly sales")
+```
+
+ACF cuts off at lag 1 with 1st order differencing, indicating AR(1) term. However `diff` function shows that order differencing required is 0.
+
+
+## Product 4
+
+```{r}
+p4.acf <- ggAcf(tsdata[,5], lag.max=40) + 
+  theme(plot.title=element_blank(), axis.title.x=element_blank())
+p4.pacf <- ggPacf(tsdata[,5], lag.max=40) +
+  theme(plot.title=element_blank())
+
+p4.acf / p4.pacf +
+  plot_annotation(title="Product 4: ACF/PACF plot of weekly sales")
+```
+
+PACF cuts off at lag 1 indicating MA(1) term, and ACF tails off.
+
+```{r}
+cat("Non-seasonal order of difference:", ndiffs(tsdata[,5]))
+cat("Seasonal order of difference:", nsdiffs(tsdata[,5]))
+
+p4.acf2 <- ggAcf(diff(tsdata[,5]), lag.max=40) + 
+  theme(plot.title=element_blank(), axis.title.x=element_blank())
+p4.pacf2 <- ggPacf(diff(tsdata[,5]), lag.max=40) +
+  theme(plot.title=element_blank())
+
+p4.acf2 / p4.pacf2 +
+  plot_annotation(title="Product 4: ACF/PACF first-order difference plot of weekly sales")
+```
+
+ACF and PACF cut off at lag 1, therefore AR(1) and MA(1) terms under 1st order differencing.
+
+
+## Product 5
+
+```{r}
+p5.acf <- ggAcf(tsdata[,6], lag.max=40) + 
+  theme(plot.title=element_blank(), axis.title.x=element_blank())
+p5.pacf <- ggPacf(tsdata[,6], lag.max=40) +
+  theme(plot.title=element_blank())
+
+p5.acf / p5.pacf +
+  plot_annotation(title="Product 5: ACF/PACF plot of weekly sales")
+```
+
+ACF and PACF cut off at lag 1 indicating AR(1) and MA(1) terms
+
+```{r}
+cat("Non-seasonal order of difference:", ndiffs(tsdata[,6]))
+cat("Seasonal order of difference:", nsdiffs(tsdata[,6]))
+
+p5.acf2 <- ggAcf(diff(tsdata[,5]), lag.max=40) + 
+  theme(plot.title=element_blank(), axis.title.x=element_blank())
+p5.pacf2 <- ggPacf(diff(tsdata[,5]), lag.max=40) +
+  theme(plot.title=element_blank())
+
+p5.acf2 / p5.pacf2 +
+  plot_annotation(title="Product 5: ACF/PACF first-order difference plot of weekly sales")
+```
+
+ACF and PACF cut off at lag 1 indicating AR(1) and MA(1) terms under first order differencing.
+
+## Potential ARIMA time-series model
+
+Potential ARIMA model based on the ACF/PACF Analysis are:
+
+* Product 1: ARIMA(1,1,0)
+* Product 2: ARIMA(1,1,0)
+* Product 3: ARIMA(1,0,1)
+* Product 4: ARIMA(1,1,1)
+* Product 5: ARIMA(1,1,1)
+
+
+
+
