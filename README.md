@@ -21,3 +21,6 @@ Welcome to my project repository. My name is Jason and I'm a Business Analytics 
 4. **World cup data exploration**
    * **Data source:** martj42 github repo
    * **Description:** With the coming World Cup '22 in Qatar, it piqued my interest to explore more into the football scenes. We use Spark SQL here to display the potential integration of SQL with pandas in python.
+5. **Heat Smart Orkney demand-response evaluation**
+   * **Data source:** ICBS/Kaluza
+   * **Description:** Orkney Islands is one of the largest wind energy hubs in the UK, however it faces an issue of high curtailment. Curtailment has high opportunity cost since wind energy cannot be harvested on demand. Here, we assess the degree of curtailment and perform scenario analysis to recommend a business plan to curb the issue.
