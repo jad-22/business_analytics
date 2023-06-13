@@ -24,3 +24,4 @@ Welcome to my project repository. My name is Jason and I'm a Business Analytics 
 5. **Heat Smart Orkney demand-response evaluation**
    * **Data source:** ICBS/Kaluza
    * **Description:** Orkney Islands is one of the largest wind energy hubs in the UK, however it faces an issue of high curtailment. Curtailment has high opportunity cost since wind energy cannot be harvested on demand. Here, we assess the degree of curtailment and perform scenario analysis to recommend a business plan to curb the issue.
+   * **Credit:** Ren Xinyao, Li Zike, Li Yetong, Ru Feng, Niu Yuhan
