@@ -1,10 +1,8 @@
 # 01. Topic Modelling on User's Web Activities
 
-***Note: Data provided by and code submitted to IPSOS are non-disclosable as per NDA***
-
 ### Data Source
 
-Data is provided by IPSOS under Non-Disclosable Agreement.
+***Data source and code are non-disclosable as per NDA***
 
 ### Credit
 
@@ -16,13 +14,13 @@ To retreive relevant topics from the web URLs that were visited by the users. Th
 
 ### Methodology
 
-Since the dataset is relatively large (in the scale of millions of rows), we need to design the script logic to minimise runtime and make it scalable. 
+Since the dataset is relatively large, we need to design the script logic to minimise runtime and make it scalable. 
 One of the key logic we introduce, which was based on my experience in operational data analyst, was to "cache" the topics that 1) have previously been visited and that 2) are invalid or do not substantial content.
 By caching these URLs and the topics modelled, we can potentially reduce the script runtime by approximately 20% based on our test data.
 
 ![topic_modelling_process](https://github.com/jad-22/business_analytics/blob/main/projects/01_nlp_topic_modelling/01_topic_modelling_process.png)
 
-Moving on to the main bulk of the algorithm, we tested various algorithm and processes as follows:
+In general, we tested various algorithm and processes as follows:
 
 1. Lemmatisation v.s. Stemming
    * Stemming: NLTK's porter stemmer and snowball stemmer
