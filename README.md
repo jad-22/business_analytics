@@ -9,7 +9,7 @@ Welcome to my project repository. My name is Jason and I'm a Business Analytics 
 ## List of Projects
 
 1. **Topic modelling of user web activities**
-   * **Data source:** IPSOS
+   * **Data source:** NDA
    * **Description:** By performing topic modelling on customers' web browsing activities, we can understand their preferences and interests. We explore various algorithm to retreive the relevant topics, such as Latent Dirichlet Allocation (LDA), Latent Semantic Indexing (LSA) and Non-Negative Matrix Factorisation (NMF)
    * **Credit:** Irene Wang, Sonia Zhang, Anne-Fleur Hilbert, Ren Xinyao, Li Zike, Du Diqin, Julia Zhang
 2. **Marketing mix modelling on promotion effectiveness**
